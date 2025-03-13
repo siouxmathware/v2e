@@ -41,8 +41,10 @@ from v2ecore.v2e_utils import inputVideoFileDialog
 import logging
 import time
 from typing import Optional, Any
+from io import StringIO
 
-logging.basicConfig()
+log_stream = StringIO()
+logging.basicConfig(stream=log_stream)
 root = logging.getLogger()
 LOGGING_LEVEL=logging.INFO
 root.setLevel(LOGGING_LEVEL)  # todo move to info for production
@@ -64,6 +66,7 @@ logger = logging.getLogger(__name__)
 # torch device
 torch_device:str = torch.device('cuda' if torch.cuda.is_available() else 'cpu').type
 logger.info(f'torch device is {torch_device}')
+logger.info(f'name of device is {torch.cuda.get_device_name(0)}')
 if torch_device=='cpu':
     logger.warning('CUDA GPU acceleration of pytorch operations is not available; '
                    'see https://pytorch.org/get-started/locally/ '
@@ -487,7 +490,7 @@ def main():
                     start_time, stop_time, (stop_time-start_time)))
 
         if exposure_mode == ExposureMode.DURATION:
-            dvsNumFrames = np.math.floor(
+            dvsNumFrames = np.floor(
                 dvsFps*srcDurationToBeProcessed/input_slowmotion_factor)
             dvsDuration = dvsNumFrames/dvsFps
             dvsPlaybackDuration = dvsNumFrames/avi_frame_rate
@@ -884,6 +887,10 @@ def main():
             logger.warning(
                 '{}: could not open {} in desktop'.format(e, output_folder))
     logger.info(timestr)
+
+    with open('%s/log.txt' % args.output_folder, 'w') as log_file:
+      log_file.write(log_stream.getvalue())
+      
     sys.exit(0)
 
 

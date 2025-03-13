@@ -41,8 +41,10 @@ from v2ecore.v2e_utils import inputVideoFileDialog
 import logging
 import time
 from typing import Optional, Any
+from io import StringIO
 
-logging.basicConfig()
+log_stream = StringIO()
+logging.basicConfig(stream=log_stream)
 root = logging.getLogger()
 LOGGING_LEVEL=logging.INFO
 root.setLevel(LOGGING_LEVEL)  # todo move to info for production
@@ -57,13 +59,14 @@ logging.addLevelName(
     logging.WARNING, "\033[1;31m%s\033[1;0m" % logging.getLevelName(
         logging.WARNING)) # red foreground
 logging.addLevelName(
-    logging.ERROR, "\033[38;5;9m%s\033[1;0m" % logging.getLevelName(
+    logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(
         logging.ERROR)) # red background
 logger = logging.getLogger(__name__)
 
 # torch device
 torch_device:str = torch.device('cuda' if torch.cuda.is_available() else 'cpu').type
 logger.info(f'torch device is {torch_device}')
+logger.info(f'name of device is {torch.cuda.get_device_name(0)}')
 if torch_device=='cpu':
     logger.warning('CUDA GPU acceleration of pytorch operations is not available; '
                    'see https://pytorch.org/get-started/locally/ '
@@ -153,14 +156,6 @@ def main():
         args.dvs640, args.dvs1024,
         logger)
 
-    # Visualization
-    avi_frame_rate = args.avi_frame_rate
-    dvs_vid = args.dvs_vid  if not args.skip_video_output else None
-    dvs_vid_full_scale = args.dvs_vid_full_scale
-    vid_orig = args.vid_orig if not args.skip_video_output else None
-    vid_slomo = args.vid_slomo if not args.skip_video_output else None
-    preview = not args.no_preview
-
 
     # setup synthetic input classes and method
     synthetic_input_module = None
@@ -176,10 +171,9 @@ def main():
                 classname=synthetic_input
             synthetic_input_class:synthetic_input = getattr(
                 synthetic_input_module, classname)
-            vid_path=os.path.join(output_folder, vid_orig) if not vid_orig is None else None
             synthetic_input_instance:base_synthetic_input = synthetic_input_class(
                 width=output_width, height=output_height,
-                preview=not args.no_preview, arg_list=other_args, avi_path=vid_path,parent_args=args) #TODO output folder might not be unique, could write to first output folder
+                preview=not args.no_preview, arg_list=other_args, avi_path=os.path.join(output_folder,args.vid_orig),parent_args=args) #TODO output folder might not be unique, could write to first output folder
 
             if not isinstance(synthetic_input_instance,base_synthetic_input):
                 logger.error(f'synthetic input instance of {synthetic_input} is of type {type(synthetic_input_instance)}, but it should be a sublass of synthetic_input;'
@@ -205,9 +199,9 @@ def main():
 
     # check to make sure there are no other arguments that might be bogus misspelled arguments in case
     # we don't have synthetic input class to pass these to
-#     if synthetic_input_instance is None and len(other_args)>0:
-#         logger.error(f'There is no synthetic input class specified but there are extra arguments {other_args} that are probably incorrect')
-#         v2e_quit(1)
+    if synthetic_input_instance is None and len(other_args)>0:
+        logger.error(f'There is no synthetic input class specified but there are extra arguments {other_args} that are probably incorrect')
+        v2e_quit(1)
 
 
 
@@ -261,7 +255,6 @@ def main():
         v2e_quit(1)
 
     input_slowmotion_factor: float = args.input_slowmotion_factor
-    input_frame_rate:Optional[float] =args.input_frame_rate
     timestamp_resolution: float = args.timestamp_resolution
     auto_timestamp_resolution: bool = args.auto_timestamp_resolution
     disable_slomo: bool = args.disable_slomo
@@ -287,7 +280,6 @@ def main():
     pos_thres = args.pos_thres
     neg_thres = args.neg_thres
     sigma_thres = args.sigma_thres
-    record_single_pixel_states=args.record_single_pixel_states
 
     # Cutoff and noise frequencies
     cutoff_hz = args.cutoff_hz
@@ -299,23 +291,18 @@ def main():
     shot_noise_rate_hz = args.shot_noise_rate_hz
 
 
+    # Visualization
+    avi_frame_rate = args.avi_frame_rate
+    dvs_vid = args.dvs_vid
+    dvs_vid_full_scale = args.dvs_vid_full_scale
+    vid_orig = args.vid_orig
+    vid_slomo = args.vid_slomo
+    preview = not args.no_preview
 
     # Event saving options
     dvs_h5 = args.dvs_h5
     dvs_aedat2 = args.dvs_aedat2
-    dvs_aedat4 = args.dvs_aedat4
     dvs_text = args.dvs_text
-    # signal noise output CSV file
-    label_signal_noise=args.label_signal_noise
-    if label_signal_noise and dvs_text is None and dvs_aedat2 is None and dvs_aedat4 is None:
-        logger.error('if you specify --label_signal_noise you must specify --dvs_text and/or --dvs_aedat2 and/or --dvs_aedat4')
-        v2e_quit(1)
-    if label_signal_noise and args.photoreceptor_noise:
-        logger.error('if you specify --label_signal_noise you cannot use --photoreceptor_noise option')
-        v2e_quit(1)
-    if label_signal_noise and shot_noise_rate_hz==0:
-        logger.error('You specified --label_signal_noise, but --shot_noise_rate=0 and there will be no noise events')
-        v2e_quit(1)
 
     # Debug feature: if show slomo stats
     slomo_stats_plot = args.slomo_stats_plot
@@ -337,7 +324,7 @@ def main():
         logger.info("opening video input file " + input_file)
 
         if os.path.isdir(input_file):
-            if input_frame_rate is None:
+            if args.input_frame_rate is None:
                 logger.error(
                     "When the video is presented as a folder, "
                     "The user must set --input_frame_rate manually")
@@ -351,7 +338,7 @@ def main():
             cap = cv2.VideoCapture(input_file)
             srcFps = cap.get(cv2.CAP_PROP_FPS)
             srcNumFrames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            if input_frame_rate is not None:
+            if args.input_frame_rate is not None:
                 logger.info(f'Input video frame rate {srcFps}Hz is overridden by command line argument --input_frame_rate={args.input_frame_rate}')
                 srcFps=args.input_frame_rate
 
@@ -503,7 +490,7 @@ def main():
                     start_time, stop_time, (stop_time-start_time)))
 
         if exposure_mode == ExposureMode.DURATION:
-            dvsNumFrames = np.math.floor(
+            dvsNumFrames = np.floor(
                 dvsFps*srcDurationToBeProcessed/input_slowmotion_factor)
             dvsDuration = dvsNumFrames/dvsFps
             dvsPlaybackDuration = dvsNumFrames/avi_frame_rate
@@ -530,7 +517,7 @@ def main():
     if output_width is None or output_height is None:
         logger.error("Either or both of output_width or output_height is None,\n"
                      "which means that they were not specified or could not be inferred from the input video. \n "
-                     "Please see options for DVS camera sizes. \nYou can try the option --dvs346 for DAVIS346 camera as one well-supported option.")
+                     "Please see options for DVS camera sizes.")
         v2e_quit(1)
     num_pixels=output_width*output_height
 
@@ -550,16 +537,14 @@ def main():
         noise_rate_cov_decades=args.noise_rate_cov_decades,
         refractory_period_s=args.refractory_period,
         seed=args.dvs_emulator_seed,
-        output_folder=output_folder, dvs_h5=dvs_h5, dvs_aedat2=dvs_aedat2, dvs_aedat4 = dvs_aedat4,
+        output_folder=output_folder, dvs_h5=dvs_h5, dvs_aedat2=dvs_aedat2,
         dvs_text=dvs_text, show_dvs_model_state=args.show_dvs_model_state,
         save_dvs_model_state=args.save_dvs_model_state,
         output_width=output_width, output_height=output_height,
         device=torch_device,
         cs_lambda_pixels=args.cs_lambda_pixels, cs_tau_p_ms=args.cs_tau_p_ms,
         hdr=hdr,
-        scidvs=scidvs,
-        record_single_pixel_states=record_single_pixel_states,
-        label_signal_noise=label_signal_noise
+        scidvs=scidvs
     )
 
     if args.dvs_params is not None:
@@ -762,7 +747,7 @@ def main():
                     if cutoff_hz > 0:
                         logger.info('Using auto_timestamp_resolution. '
                                        'checking if cutoff hz is ok given '
-                                       'sample rate {}'.format(1/avgTs))
+                                       'samplee rate {}'.format(1/avgTs))
                         check_lowpass(cutoff_hz, 1/avgTs, logger)
 
                     # read back to memory
@@ -894,7 +879,7 @@ def main():
 
     # try to show desktop
     # suppress folder opening if it's not necessary
-    if not output_folder is None:
+    if not args.skip_video_output and not args.no_preview:
         try:
             logger.info(f'showing {output_folder} in desktop')
             desktop.open(os.path.abspath(output_folder))
@@ -902,6 +887,10 @@ def main():
             logger.warning(
                 '{}: could not open {} in desktop'.format(e, output_folder))
     logger.info(timestr)
+
+    with open('%s/log.txt' % args.output_folder, 'w') as log_file:
+      log_file.write(log_stream.getvalue())
+      
     sys.exit(0)
 
 
